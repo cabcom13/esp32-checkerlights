@@ -14,13 +14,23 @@ const char* espClientName = "w1a";
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-const int blueLedPin = 2;
-const int redLedPin = 21;
-const int yellowLedPin = 32;
-const int greenLedPin = 33;
+// const int blueLedPin = 2;
+const int redLedPin = 12;
+const int BlueLedPin = 13;
+const int greenLedPin = 14;
 const int buttonPin = 26;
 
-enum Color { RED, YELLOW, GREEN, OFF, PENDING };
+enum Color {
+    RED,
+    YELLOW,
+    GREEN,
+    BLUE,
+    CYAN,
+    MAGENTA,
+    WHITE,
+    OFF,
+    PENDING
+};
 Color currentColor = RED;
 
 
@@ -35,9 +45,9 @@ IRrecv irrecv(RECV_PIN);
 decode_results results;
 
 void setup() {
-  pinMode(blueLedPin, OUTPUT);
+
   pinMode(redLedPin, OUTPUT);
-  pinMode(yellowLedPin, OUTPUT);
+  pinMode(BlueLedPin, OUTPUT);
   pinMode(greenLedPin, OUTPUT);
   pinMode(buttonPin, INPUT_PULLUP);
 
@@ -62,7 +72,7 @@ void loop() {
   }
   client.loop();
 
-  digitalWrite(blueLedPin, WiFi.status() == WL_CONNECTED ? HIGH : LOW);
+  // digitalWrite(blueLedPin, WiFi.status() == WL_CONNECTED ? HIGH : LOW);
 
   handleButtonPress();
   handleIRReception();
@@ -82,7 +92,7 @@ void loop() {
 void setupWiFi() {
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
-    digitalWrite(blueLedPin, !digitalRead(blueLedPin)); // Blink LED
+    // digitalWrite(blueLedPin, !digitalRead(blueLedPin)); // Blink LED
     delay(500);
   }
   Serial.println("Connected to WiFi");
@@ -108,17 +118,25 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.println(message);
   
 
-  if (message == "red") {
+if (message == "red") {
     setColor(RED);
-  } else if (message == "yellow") {
-    setColor(YELLOW);
-  } else if (message == "green") {
+} else if (message == "blue") {
+    setColor(BLUE);
+} else if (message == "green") {
     setColor(GREEN);
-  } else if (message == "off") {
+} else if (message == "yellow") {
+    setColor(YELLOW);
+} else if (message == "cyan") {
+    setColor(CYAN);
+} else if (message == "magenta") {
+    setColor(MAGENTA);
+} else if (message == "white") {
+    setColor(WHITE);
+} else if (message == "off") {
     setColor(OFF);
-  } else if (message == "pending") {
+} else if (message == "pending") {
     setColor(PENDING);
-  }
+}
 
 }
 
@@ -142,7 +160,7 @@ void handleIRReception() {
       Serial.print("IR command: ");
       Serial.println(IrReceiver.decodedIRData.command);
       if (IrReceiver.decodedIRData.command == 0x13) {
-        if (currentColor != OFF && currentColor != PENDING) {
+        if (currentColor != OFF && currentColor != PENDING && currentColor != CYAN && currentColor != MAGENTA && currentColor != WHITE && currentColor != BLUE) {
           switchColor(true);
           delay(1000); // Debounce
         }
@@ -165,32 +183,76 @@ void switchColor(bool canSendMessage) {
 void setColor(Color color) {
   if (currentColor != color) {
     currentColor = color;
-
-    switch (color) {
-      case RED:
-        digitalWrite(redLedPin, HIGH);
-        digitalWrite(yellowLedPin, LOW);
-        digitalWrite(greenLedPin, LOW);
-        break;
-      case YELLOW:
-        digitalWrite(redLedPin, LOW);
-        digitalWrite(yellowLedPin, HIGH);
-        digitalWrite(greenLedPin, LOW);
-        break;
-      case GREEN:
-        digitalWrite(redLedPin, LOW);
-        digitalWrite(yellowLedPin, LOW);
-        digitalWrite(greenLedPin, HIGH);
-        break;
-      case OFF:
-        digitalWrite(redLedPin, LOW);
-        digitalWrite(yellowLedPin, LOW);
-        digitalWrite(greenLedPin, LOW);
-        break;
-      case PENDING:
-        blinkPending();
-        return; // Don't send state for pending
-    }
+  switch (color) {
+    case RED:
+      digitalWrite(redLedPin, LOW);
+      digitalWrite(BlueLedPin, HIGH);
+      digitalWrite(greenLedPin, HIGH);
+      break;
+    case BLUE:
+      digitalWrite(redLedPin, HIGH);
+      digitalWrite(BlueLedPin, LOW);
+      digitalWrite(greenLedPin, HIGH);
+      break;
+    case GREEN:
+      digitalWrite(redLedPin, HIGH);
+      digitalWrite(BlueLedPin, HIGH);
+      digitalWrite(greenLedPin, LOW);
+      break;
+    case YELLOW:
+      digitalWrite(redLedPin, LOW);
+      digitalWrite(BlueLedPin, HIGH);
+      digitalWrite(greenLedPin, LOW);
+      break;
+    case CYAN:
+      digitalWrite(redLedPin, HIGH);
+      digitalWrite(BlueLedPin, LOW);
+      digitalWrite(greenLedPin, LOW);
+      break;
+    case MAGENTA:
+      digitalWrite(redLedPin, LOW);
+      digitalWrite(BlueLedPin, LOW);
+      digitalWrite(greenLedPin, HIGH);
+      break;
+    case WHITE:
+      digitalWrite(redLedPin, LOW);
+      digitalWrite(BlueLedPin, LOW);
+      digitalWrite(greenLedPin, LOW);
+      break;
+    case OFF:
+      digitalWrite(redLedPin, HIGH);
+      digitalWrite(BlueLedPin, HIGH);
+      digitalWrite(greenLedPin, HIGH);
+      break;
+    case PENDING:
+      blinkPending();
+      return; // Don't send state for pending
+  }
+    // switch (color) {
+    //   case RED:
+    //     digitalWrite(redLedPin, LOW);
+    //     digitalWrite(BlueLedPin, HIGH);
+    //     digitalWrite(greenLedPin, HIGH);
+    //     break;
+    //   case YELLOW:
+    //     digitalWrite(redLedPin, LOW);
+    //     digitalWrite(BlueLedPin, HIGH);
+    //     digitalWrite(greenLedPin, LOW);
+    //     break;
+    //   case GREEN:
+    //     digitalWrite(redLedPin, HIGH);
+    //     digitalWrite(BlueLedPin, HIGH);
+    //     digitalWrite(greenLedPin, LOW);
+    //     break;
+    //   case OFF:
+    //     digitalWrite(redLedPin,HIGH);
+    //     digitalWrite(BlueLedPin, HIGH);
+    //     digitalWrite(greenLedPin, HIGH);
+    //     break;
+    //   case PENDING:
+    //     blinkPending();
+    //     return; // Don't send state for pending
+    // }
 
     EEPROM.write(0, currentColor);
     EEPROM.commit();
@@ -209,7 +271,7 @@ void blinkPending() {
     ledState = !ledState;
 
     digitalWrite(redLedPin, ledState ? HIGH : LOW);
-    digitalWrite(yellowLedPin, ledState ? LOW : HIGH);
+    digitalWrite(BlueLedPin, ledState ? LOW : HIGH);
     digitalWrite(greenLedPin, LOW);
   }
 }
