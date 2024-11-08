@@ -2,14 +2,15 @@
 
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include <EEPROM.h>
 #include <IRremote.hpp>
 
 const char* ssid = "TP-LINK_B383";
 const char* password = "cda619872";
 const char* mqttServer = "192.168.0.101";
 const int mqttPort = 1883;
-const char* espClientName = "w1b";
+
+const char* espClientName = "w2c";
+const int IRCOMMAND = 0xE;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -19,27 +20,9 @@ const int redLedPin = 15;
 const int BlueLedPin = 5;
 const int greenLedPin = 4;
 
-
-const int IRCOMMAND = 0x9;
-// const int IRCOMMAND = 0x10;
-// const int IRCOMMAND = 0x11;
-// const int IRCOMMAND = 0x12;
-// const int IRCOMMAND = 0x13;
-// const int IRCOMMAND = 0x14;
-// const int IRCOMMAND = 0x15;
-// const int IRCOMMAND = 0x16;
-// const int IRCOMMAND = 0x17;
-// const int IRCOMMAND = 0x18;
-// const int IRCOMMAND = 0x19;
-// const int IRCOMMAND = 0x20;
-// const int IRCOMMAND = 0x21;
-// const int IRCOMMAND = 0x22;
-// const int IRCOMMAND = 0x23;
-
-
 enum Color {
   RED,
-  YELHIGH,
+  YELLOW,
   GREEN,
   BLUE,
   CYAN,
@@ -52,8 +35,6 @@ Color currentColor = RED;
 
 
 bool buttonPressed = false;
-
-
 unsigned long lastSendTime = 0;
 const unsigned long sendInterval = 30000;
 
@@ -62,25 +43,21 @@ IRrecv irrecv(RECV_PIN);
 decode_results results;
 
 void setup() {
+  Serial.begin(115200);
+  setupWiFi();
 
   pinMode(redLedPin, OUTPUT);
   pinMode(BlueLedPin, OUTPUT);
   pinMode(greenLedPin, OUTPUT);
 
-
-  Serial.begin(115200);
-  setupWiFi();
-
   client.setServer(mqttServer, mqttPort);
   client.setCallback(mqttCallback);
 
-  EEPROM.begin(1);
-  currentColor = (Color)EEPROM.read(0);
-  setColor(currentColor);
-
   IrReceiver.begin(RECV_PIN);
-  Serial.print(F("Ready to receive IR signals of protocols: "));
-  printActiveIRProtocols(&Serial);
+  // Serial.print(F("Ready to receive IR signals of protocols: "));
+  // printActiveIRProtocols(&Serial);
+ 
+  sendCurrentState(); // send Heartbeat
 }
 
 void loop() {
@@ -106,10 +83,22 @@ void loop() {
 void setupWiFi() {
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
-    // digitalWrite(blueLedPin, !digitalRead(blueLedPin)); // Blink LED
-    delay(500);
+    setColor(BLUE);
+    delay(2000);  // Blau für 1 Sekunde
+
+    // Ausschalten der LED (OFF)
+    setColor(OFF);
+    delay(2000);  // Aus für 1 Sekunde
+
   }
-  Serial.println("Connected to WiFi");
+  if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("Connected to WiFi!");
+      setColor(BLUE); // Setze die Farbe zu Blau, wenn WiFi verbunden ist
+      delay(5000);  // Aus für 5 Sekunde
+      setColor(OFF);
+      
+    }
+    setColor(currentColor);
 }
 
 void reconnect() {
@@ -118,7 +107,8 @@ void reconnect() {
     String clientId = "ESP_" + String(espClientName); // Erstelle den Client-Namen als String
     if (client.connect(clientId.c_str())) {
       Serial.println(clientId +" connected!");
-      client.subscribe(espClientName);
+      client.subscribe(espClientName); // Abonnieren des individuellen Topics (z.B. "w2a")
+      client.subscribe("all");         // Abonnieren des allgemeinen "all"-Topics
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -129,29 +119,53 @@ void reconnect() {
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String message = String((char*)payload).substring(0, length);
-  Serial.print("Message received: ");
-  Serial.println(message);
+  // Serial.print("Message received on topic: ");
+  // Serial.println(topic);
+  // Serial.print("Message: ");
+  // Serial.println(message);
 
-
-  if (message == "red") {
-    setColor(RED);
-  } else if (message == "blue") {
-    setColor(BLUE);
-  } else if (message == "green") {
-    setColor(GREEN);
-  } else if (message == "yellow") {
-    setColor(YELHIGH);
-  } else if (message == "cyan") {
-    setColor(CYAN);
-  } else if (message == "magenta") {
-    setColor(MAGENTA);
-  } else if (message == "white") {
-    setColor(WHITE);
-  } else if (message == "off") {
-    setColor(OFF);
-  } else if (message == "pending") {
-    setColor(PENDING);
+    if (String(topic) == espClientName) {
+    if (message == "red") {
+      setColor(RED);
+    } else if (message == "blue") {
+      setColor(BLUE);
+    } else if (message == "green") {
+      setColor(GREEN);
+    } else if (message == "yellow") {
+      setColor(YELLOW);
+    } else if (message == "cyan") {
+      setColor(CYAN);
+    } else if (message == "magenta") {
+      setColor(MAGENTA);
+    } else if (message == "white") {
+      setColor(WHITE);
+    } else if (message == "off") {
+      setColor(OFF);
+    } else if (message == "pending") {
+      setColor(PENDING);
+    }
+  } else if (String(topic) == "all") {
+    if (message == "red") {
+      setColor(RED);
+    } else if (message == "blue") {
+      setColor(BLUE);
+    } else if (message == "green") {
+      setColor(GREEN);
+    } else if (message == "yellow") {
+      setColor(YELLOW);
+    } else if (message == "cyan") {
+      setColor(CYAN);
+    } else if (message == "magenta") {
+      setColor(MAGENTA);
+    } else if (message == "white") {
+      setColor(WHITE);
+    } else if (message == "off") {
+      setColor(OFF);
+    } else if (message == "pending") {
+      setColor(PENDING);
+    }
   }
+
 }
 
 
@@ -161,8 +175,8 @@ void handleIRReception() {
     
     if (IrReceiver.decodedIRData.protocol != UNKNOWN) {
       Serial.print("IR command: ");
-      Serial.println(IrReceiver.decodedIRData.command);
-
+      // Serial.println(IrReceiver.decodedIRData.command);
+      // IrReceiver.printIRResultShort(&Serial);
       if (IrReceiver.decodedIRData.command == IRCOMMAND) {
         if (currentColor != OFF && currentColor != PENDING && currentColor != CYAN && currentColor != MAGENTA && currentColor != WHITE && currentColor != BLUE) {
           switchColor(true);
@@ -175,8 +189,8 @@ void handleIRReception() {
 }
 
 void switchColor(bool canSendMessage) {
-  Color newColor = (currentColor == RED) ? YELHIGH : (currentColor == YELHIGH) ? GREEN
-                                                                             : RED;
+  Color newColor = (currentColor == RED) ? GREEN : RED;
+                                                                             
   setColor(newColor);
   // Nur senden, wenn sich der Zustand geändert hat und nicht von einem MQTT-Update
   if (canSendMessage) {
@@ -203,7 +217,7 @@ void setColor(Color color) {
         digitalWrite(BlueLedPin, LOW);
         digitalWrite(greenLedPin, HIGH);
         break;
-      case YELHIGH:
+      case YELLOW:
         digitalWrite(redLedPin, HIGH);
         digitalWrite(BlueLedPin, LOW);
         digitalWrite(greenLedPin, HIGH);
@@ -258,8 +272,7 @@ void setColor(Color color) {
     //     return; // Don't send state for pending
     // }
 
-    EEPROM.write(0, currentColor);
-    EEPROM.commit();
+
   }
 }
 
@@ -282,7 +295,7 @@ void sendCurrentState() {
   String message;
   switch (currentColor) {
     case RED: message = "red"; break;
-    case YELHIGH: message = "yellow"; break;
+    case YELLOW: message = "yellow"; break;
     case GREEN: message = "green"; break;
     case OFF: message = "off"; break;
     case PENDING: message = "pending"; break;
