@@ -1,7 +1,8 @@
 #define DECODE_NEC
 
 #include <WiFi.h>
-#include <PubSubClient.h>
+// #include <PubSubClient.h>
+#include <MQTTClient.h>
 #include <IRremote.hpp>
 #include <WebOTA.h>
 #include <Preferences.h>
@@ -18,9 +19,14 @@ const int mqttPort = 1883;
 const int MQTT_RETRY_DELAY = 5000;
 const int MQTT_MAX_RETRIES = 3;
 
-const char* espClientName = "w1a";
-const char* host = "ESP-w1a";
-const int IRCOMMAND = 0x9;
+// const char* espClientName = "w1a";
+// const char* host = "ESP-w1a";
+// const int irCommand = 0x9;
+
+// Globale Variablen
+String espClientName;
+String host;
+int irCommand;
 
 // Hardware-Pins
 const int redLedPin = 15;
@@ -30,13 +36,14 @@ const int RECV_PIN = 18;
 
 // Objekte
 WiFiClient espClient;
-PubSubClient client(espClient);
+MQTTClient mqttClient(256);
+// PubSubClient client(espClient);
 IRrecv irrecv(RECV_PIN);
 extern Preferences preferences;
 
 // Status-Variablen
 enum Color {
-    RED, YELLOW, GREEN, BLUE, CYAN, MAGENTA, WHITE, OFF, PENDING
+    RED, YELLOW, GREEN, BLUE, CYAN, MAGENTA, WHITE, OFF
 };
 Color currentColor = CYAN;
 bool buttonPressed = false;
@@ -54,16 +61,16 @@ void setup() {
     Serial.begin(115200);
     Serial.println("Booting");
 
-      // Lesen der Werte
-      preferences.begin("my-app", true);
-      String espClientName = preferences.getString("espClientName", "default");
-      String host = preferences.getString("host", "default");
-      String irCommand = preferences.getString("IRCOMMAND", "default");
-      preferences.end();
+    preferences.begin("led-state", true);
+    espClientName = preferences.getString("espClientName", "default");
+    host = preferences.getString("host", "default");
+    irCommand = preferences.getInt("IRCOMMAND");
+    preferences.end();
 
-      Serial.println(espClientName);
-      Serial.println(host);
-      Serial.println(irCommand);
+    Serial.println("espClientName: " + espClientName);
+    Serial.println("Host: " + host);
+    Serial.printf("IR Command: 0x%X\n", irCommand);
+
     // Watchdog Timer initialisieren
     esp_task_wdt_config_t wdt_config = {
         .timeout_ms = WDT_TIMEOUT * 1000,  // Timeout in Millisekunden
@@ -121,15 +128,60 @@ void setupWiFi() {
     }
 }
 
+// void setupMQTT() {
+//     client.setServer(mqttServer, mqttPort);
+//     client.setCallback(mqttCallback);
+//     client.setKeepAlive(60);
+// }
+
 void setupMQTT() {
-    client.setServer(mqttServer, mqttPort);
-    client.setCallback(mqttCallback);
-    client.setKeepAlive(60);
+    mqttClient.begin(mqttServer, espClient);
+    mqttClient.onMessage(messageReceived);
+    connectMQTT();
+}
+
+void connectMQTT() {
+    while (!mqttClient.connected()) {
+        Serial.print("Connecting to MQTT... ");
+        const char* lwtTopic = (String(espClientName) + "_status").c_str();
+        const char* lwtMessage = "offline";
+
+        // LWT konfigurieren
+        mqttClient.setWill(lwtTopic, lwtMessage, true, 2);
+
+        // MQTT-Verbindung herstellen
+        if (mqttClient.connect(espClientName.c_str(), "user", "password")) {
+            Serial.println("connected!");
+            mqttClient.subscribe(espClientName.c_str(), 2);
+            mqttClient.subscribe("all", 2);
+            mqttClient.publish((String(espClientName) + "_status").c_str(), "online", false, 2);
+        } else {
+            Serial.println("failed, retrying...");
+            delay(MQTT_RETRY_DELAY);
+        }
+    }
+}
+
+void messageReceived(String &topic, String &payload) {
+    Serial.println("Received message: " + topic + " - " + payload);
+
+    if (topic == "all" && payload == "who_is_here") {
+        sendCurrentState();
+    }
+
+    if (topic == espClientName || topic == "all") {
+        if (payload == "red") setColor(RED);
+        else if (payload == "blue") setColor(BLUE);
+        else if (payload == "green") setColor(GREEN);
+        else if (payload == "yellow") setColor(YELLOW);
+        else if (payload == "cyan") setColor(CYAN);
+        else if (payload == "magenta") setColor(MAGENTA);
+        else if (payload == "white") setColor(WHITE);
+        else if (payload == "off") setColor(OFF);
+    }
 }
 
 void loop() {
-    // Watchdog Reset
-    esp_task_wdt_reset();
 
 
     // WiFi-Verbindung prüfen
@@ -139,29 +191,32 @@ void loop() {
     }
 
     // MQTT-Verbindung prüfen
-    if (!client.connected()) {
-        reconnectMQTT();
+    if (!mqttClient.connected()) {
+        connectMQTT();
     }
+
     
+    // // Status-Update senden
+    // if (millis() - lastSendTime >= sendInterval) {
+    //     lastSendTime = millis();
+    //     sendCurrentState();
+    //     if (client.connected()) {
+    //       client.publish((String(espClientName) + "_data").c_str(), "connected");
+    //     }
+    // }
 
-    // Pending-Status behandeln
-    if (currentColor == PENDING) {
-        blinkPending();
-    }
-
-    // Status-Update senden
-    if (millis() - lastSendTime >= sendInterval) {
-        lastSendTime = millis();
-        sendCurrentState();
-    }
-
-    client.loop();
+    mqttClient.loop();
 
     // IR-Empfang prüfen
     handleIRReception();
 
     // OTA Updates behandeln
     webota.handle();
+
+
+        // Watchdog Reset
+    esp_task_wdt_reset();
+delay(10);  // Kurze Pause, um den Watchdog zu füttern
 }
 
 void checkWiFiConnection() {
@@ -174,13 +229,15 @@ void checkWiFiConnection() {
 void reconnectMQTT() {
     int retries = 0;
     
-    while (!client.connected() && retries < MQTT_MAX_RETRIES) {
+    while (!mqttClient.connected() && retries < MQTT_MAX_RETRIES) {
         String clientId = "ESP_" + String(espClientName);
-        
-        if (client.connect(clientId.c_str())) {
-            client.subscribe(espClientName);
-            client.subscribe("all");
-            client.publish((String(espClientName) + "_data").c_str(), "connected");
+        const char* lwtTopic = (String(espClientName) + "_status").c_str();
+        const char* lwtMessage = "offline";
+        // if (client.connect(clientId.c_str(), NULL, NULL, lwtTopic, 0, true, lwtMessage, true)) {
+        if (mqttClient.connect(clientId.c_str())) {
+            mqttClient.subscribe(espClientName.c_str(), 2);
+            mqttClient.subscribe("all", 2);
+            mqttClient.publish((String(espClientName) + "_status").c_str(), "online", false, 2);
             Serial.println("MQTT Connected");
             break;
         }
@@ -191,7 +248,7 @@ void reconnectMQTT() {
         esp_task_wdt_reset(); // Watchdog während der Verbindungsversuche zurücksetzen
     }
     
-    if (!client.connected()) {
+    if (!mqttClient.connected()) {
         ESP.restart();
     }
 }
@@ -201,6 +258,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (String(topic) == espClientName || String(topic) == "all") {
         Serial.println(topic);
         Serial.println("MQTT Topic: "+ message);
+
+        // Überprüfen, ob eine "who_is_here"-Anfrage empfangen wurde
+        if (String(topic) == "all") {
+            if(message == "who_is_here"){
+            sendCurrentState();
+            }
+            
+        }
+
         if (message == "red") setColor(RED);
         else if (message == "blue") setColor(BLUE);
         else if (message == "green") setColor(GREEN);
@@ -209,15 +275,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         else if (message == "magenta") setColor(MAGENTA);
         else if (message == "white") setColor(WHITE);
         else if (message == "off") setColor(OFF);
-        else if (message == "pending") setColor(PENDING);
+
+        // sendCurrentState();
     }
 }
 
 void handleIRReception() {
     if (IrReceiver.decode()) {
         if (IrReceiver.decodedIRData.protocol != UNKNOWN &&
-            IrReceiver.decodedIRData.command == IRCOMMAND) {
-            if (currentColor != OFF && currentColor != PENDING && 
+            IrReceiver.decodedIRData.command == irCommand) {
+            if (currentColor != OFF && 
                 currentColor != CYAN && currentColor != MAGENTA && 
                 currentColor != BLUE) {
                 analogWrite(redLedPin, 255);
@@ -252,6 +319,7 @@ void setColor(Color color) {
     // if (currentColor != color) {
         fadeToColor(color);
         saveLastColor();
+
     // }
 }
 
@@ -325,7 +393,6 @@ void blinkPending() {
         }
     }
 }
-
 void sendCurrentState() {
     String message;
     switch (currentColor) {
@@ -337,7 +404,21 @@ void sendCurrentState() {
         case MAGENTA: message = "magenta"; break;
         case WHITE: message = "white"; break;
         case OFF: message = "off"; break;
-        case PENDING: message = "pending"; break;
     }
-    client.publish(espClientName, message.c_str());
+    mqttClient.publish((String(espClientName)).c_str(), message.c_str(), true, 2);
 }
+// void sendCurrentState() {
+//     String message;
+//     switch (currentColor) {
+//         case RED: message = "red"; break;
+//         case YELLOW: message = "yellow"; break;
+//         case GREEN: message = "green"; break;
+//         case BLUE: message = "blue"; break;
+//         case CYAN: message = "cyan"; break;
+//         case MAGENTA: message = "magenta"; break;
+//         case WHITE: message = "white"; break;
+//         case OFF: message = "off"; break;
+
+//     }
+//     client.publish(espClientName.c_str(), message.c_str());
+// }

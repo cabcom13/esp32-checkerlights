@@ -293,21 +293,22 @@ int WebOTA::add_http_routes(WebServer *server, const char *path) {
 	server->on("/", HTTP_GET, [server]() {
 		check_auth(server);
 
-		server->send(200, "text/html", F("<h1 style=\"font-family: sans-serif;\">Arduino WebOTA</h1>"));
+		server->send(200, "text/html", F("<h1 style=\"font-family: sans-serif;\">:-)</h1>"));
 	});
 
     // New page for espClientName, host, IRCommand
-    server->on("/ircontrol", HTTP_GET, [server]() {
+    server->on("/settings", HTTP_GET, [server]() {
         check_auth(server);
 
         String ir_html = "";
         ir_html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
-        ir_html += "<title>IR Control</title></head><body>";
-        ir_html += "<h1>ESP32 IR Control</h1><form method=\"POST\" action=\"/sendir\">";
+        ir_html += "<title>ESP Settings</title></head><body>";
+        ir_html += "<h1>Checkerlight Settings</h1><form method=\"POST\" action=\"/sendir\">";
         ir_html += "<label for=\"espClientName\">ESP Client Name:</label><input type=\"text\" id=\"espClientName\" name=\"espClientName\"><br><br>";
         ir_html += "<label for=\"host\">Host:</label><input type=\"text\" id=\"host\" name=\"host\"><br><br>";
         ir_html += "<label for=\"IRCOMMAND\">IR Command:</label><input type=\"text\" id=\"IRCOMMAND\" name=\"IRCOMMAND\"><br><br>";
-        ir_html += "<input type=\"submit\" value=\"Send Command\"></form></body></html>";
+        ir_html += "<label for=\"IR_TL_COMMAND\">IR TL Command:</label><input type=\"text\" id=\"IR_TL_COMMAND\" name=\"IR_TL_COMMAND\"><br><br>";
+		ir_html += "<input type=\"submit\" value=\"Send Command\"></form></body></html>";
 
         server->send(200, "text/html", ir_html);
     });
@@ -319,18 +320,26 @@ int WebOTA::add_http_routes(WebServer *server, const char *path) {
         String espClientName = server->arg("espClientName");
         String host = server->arg("host");
         String irCommand = server->arg("IRCOMMAND");
+		String ir_tl_Command = server->arg("IR_TL_COMMAND");
+
+		// Konvertiere den String in einen int
+		int irCommandInt = strtol(irCommand.c_str(), NULL, 16);
+		int ir_tl_CommandInt = strtol(ir_tl_Command.c_str(), NULL, 16);
+
 
 		// Initialisierung und Speichern der Werte
 		preferences.begin("led-state", false);
 		preferences.putString("espClientName", espClientName);
 		preferences.putString("host", host);
-		preferences.putString("IRCOMMAND", irCommand);
+		preferences.putInt("IRCOMMAND", irCommandInt);
+		preferences.putInt("IR_TL_COMMAND", ir_tl_CommandInt);
 		preferences.end();
 
         // Handle IR Command sending here
-        Serial.printf("Received IR Command Request: ESPClientName=%s, Host=%s, IRCommand=%s\n", espClientName.c_str(), host.c_str(), irCommand.c_str());
+        Serial.printf("Received IR Command Request: ESPClientName=%s, Host=%s, IRCOMMAND=%s, IR_TL_COMMAND=%s\n", espClientName.c_str(), host.c_str(), irCommand.c_str(),ir_tl_Command.c_str());
 
         server->send(200, "text/plain", "IR Command Sent!");
+		
 		ESP.restart();
     });
 
