@@ -293,24 +293,70 @@ int WebOTA::add_http_routes(WebServer *server, const char *path) {
 	server->on("/", HTTP_GET, [server]() {
 		check_auth(server);
 
-		server->send(200, "text/html", F("<h1 style=\"font-family: sans-serif;\">:-)</h1>"));
+        String espClientName;
+        String macAdd;
+        String signal;
+        String color;
+
+
+        preferences.begin("led-state", true);
+		espClientName = preferences.getString("espClientName", "default");
+        color = preferences.getUChar("lastColor");
+        macAdd = WiFi.macAddress();
+        signal = WiFi.RSSI();
+
+        preferences.end();
+
+        
+        
+
+        String ir_html = "";
+        ir_html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+        ir_html += "<title>ESP Settings</title></head><body>";
+        ir_html +=  "<div>Hostname: "+espClientName+"</div>";
+        ir_html +=  "<div>MacAddress: "+macAdd +"</div>";
+        ir_html +=  "<div>Signalstärke: "+signal +"</div>";
+        ir_html +=  "<div>letze Farbe: "+color +"</div>";
+
+        ir_html += "<form method=\"POST\" action=\"/restart\">";
+		ir_html += "<input type=\"submit\" value=\"ESP Restart\"></form>";
+
+        ir_html += "</body></html>";
+        server->send(200, "text/html", ir_html);		
+        // server->send(200, "text/plain", "ESP Client: " + espClientName);
 	});
 
     // New page for espClientName, host, IRCommand
     server->on("/settings", HTTP_GET, [server]() {
         check_auth(server);
 
+
+		// Initialisierung und Speichern der Werte
+		preferences.begin("led-state", true);
+		String  espClientName = preferences.getString("espClientName", "default");
+		String  host = preferences.getString("host", "default");
+
+		preferences.end();
+
         String ir_html = "";
         ir_html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
         ir_html += "<title>ESP Settings</title></head><body>";
         ir_html += "<h1>Checkerlight Settings</h1><form method=\"POST\" action=\"/sendir\">";
-        ir_html += "<label for=\"espClientName\">ESP Client Name:</label><input type=\"text\" id=\"espClientName\" name=\"espClientName\"><br><br>";
-        ir_html += "<label for=\"host\">Host:</label><input type=\"text\" id=\"host\" name=\"host\"><br><br>";
+        ir_html += "<label for=\"espClientName\">ESP Client Name:</label><input type=\"text\" id=\"espClientName\" value=\""+espClientName+"\" name=\"espClientName\"><br><br>";
+        ir_html += "<label for=\"host\">Host:</label><input type=\"text\" id=\"host\" name=\"host\" value=\""+host+"\"><br><br>";
         ir_html += "<label for=\"IRCOMMAND\">IR Command:</label><input type=\"text\" id=\"IRCOMMAND\" name=\"IRCOMMAND\"><br><br>";
-        ir_html += "<label for=\"IR_TL_COMMAND\">IR TL Command:</label><input type=\"text\" id=\"IR_TL_COMMAND\" name=\"IR_TL_COMMAND\"><br><br>";
+        ir_html += "<label for=\"IR_TL_COMMAND\">IR TL Command:</label><input type=\"text\" id=\"IR_TL_COMMAND\"  name=\"IR_TL_COMMAND\"><br><br>";
 		ir_html += "<input type=\"submit\" value=\"Send Command\"></form></body></html>";
 
         server->send(200, "text/html", ir_html);
+    });
+
+    // Handling POST request for sending IR command
+    server->on("/restart", HTTP_POST, [server]() {
+        check_auth(server);
+        server->send(200, "text/plain", "Restart läuft");
+		
+		ESP.restart();
     });
 
     // Handling POST request for sending IR command
