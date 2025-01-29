@@ -18,7 +18,7 @@
 const char* ssid = "TP-LINK_B383_u2-2";
 // const char* ssid = "TP-LINK_B383";
 
-const char* password = "cda619872";
+const char* password = "";
 const char* mqttServer = "192.168.0.101";
 const int mqttPort = 1883;
 const int MQTT_RETRY_DELAY = 5000;
