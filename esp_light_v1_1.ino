@@ -15,8 +15,8 @@
 // WiFi und MQTT Konfiguration
 // const char* ssid = "TP-LINK_B383_u1";
 // const char* ssid = "TP-LINK_B383_u2-1";
-const char* ssid = "TP-LINK_B383_u2-2";
-// const char* ssid = "TP-LINK_B383";
+// const char* ssid = "TP-LINK_B383_u2-2";
+const char* ssid = "TP-LINK_B383";
 
 const char* password = "";
 const char* mqttServer = "192.168.0.101";
@@ -59,12 +59,12 @@ enum Color {
   WHITE,
   OFF
 };
-Color currentColor = CYAN;
+Color currentColor = WHITE;
 bool isStandby = false;
 int buttonCount = 0;
 unsigned long lastSendTime = 0;
 unsigned long lastWiFiCheck = 0;
-const unsigned long sendInterval = 30000;
+const unsigned long sendInterval = 10000;
 const unsigned long wifiCheckInterval = 60000;
 
 // Watchdog Reset Funktion
@@ -78,7 +78,7 @@ void setup() {
 
   preferences.begin("led-state", true);
   espClientName = preferences.getString("espClientName", "default");
-  wifiSSID = preferences.getString("wifiSSID", "TP-LINK_B383_u1");
+  wifiSSID = preferences.getString("wifiSSID", ssid);
   host = preferences.getString("host", "default");
   irCommand = preferences.getInt("IRCOMMAND");
   ir_tl_Command = preferences.getInt("IR_TL_COMMAND");
@@ -115,7 +115,7 @@ void setup() {
   IrReceiver.begin(RECV_PIN);
 
   // Letzte bekannte Farbe wiederherstellen
-  // restoreLastColor();
+  restoreLastColor();
 
 }
 void loop() {
@@ -142,8 +142,9 @@ void loop() {
     lastSendTime = millis();
 
     if (mqttClient.connected()) {
-       mqttClient.publish((espClientName + "_status").c_str(), "online", false, 0);
-       Serial.println("Online");
+      //  mqttClient.publish((espClientName + "_status").c_str(), "online", false, 0);
+      //  Serial.println("Online");
+      sendCurrentState();
     }
   }
 
@@ -198,14 +199,14 @@ void setupWiFi() {
 
 
 void setupMQTT() {
-  // mqttClient.setKeepAlive(120);
+  mqttClient.setKeepAlive(120);
   mqttClient.begin(mqttServer, espClient);
   mqttClient.onMessage(messageReceived);
-  const char* lwtTopic = (espClientName + "/status").c_str();
-  const char* lwtMessage = "offline";
+  // const char* lwtTopic = (espClientName + "/status").c_str();
+  // const char* lwtMessage = "offline";
 
   // LWT konfigurieren
-  mqttClient.setWill(lwtTopic, lwtMessage, true, 0);
+  // mqttClient.setWill(lwtTopic, lwtMessage, true, 0);
 
   connectMQTT();
 }
@@ -262,9 +263,9 @@ void messageReceived(String& topic, String& payload) {
       int red = payload.substring(0, commaIndex1).toInt();
       int green = payload.substring(commaIndex1 + 1, commaIndex2).toInt();
       int blue = payload.substring(commaIndex2 + 1).toInt();
-      Serial.println(red);
-      Serial.println(green);
-      Serial.println(blue);
+      // Serial.println(red);
+      // Serial.println(green);
+      // Serial.println(blue);
 
       setPWMColor(red, green, blue);
     } else {
@@ -307,7 +308,7 @@ void sendCurrentState() {
     case WHITE: message = "white"; break;
     case OFF: message = "off"; break;
   }
-  Serial.println("asd");
+
   mqttClient.publish((espClientName + "/status").c_str(), message.c_str(), true, 0);
   // mqttClient.publish((String(espClientName)).c_str(), message.c_str(), true, 2);
 }
