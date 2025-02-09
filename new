@@ -147,7 +147,7 @@ void loop() {
     wifiManager.process();
 
     // wifiManager.startConfigPortal("OnDemandAP");
-    // handleNetwork();
+
     mqttClient.loop();
     handleStatusUpdates();
 }
@@ -167,20 +167,6 @@ void setupTopics() {
     snprintf(commandTopic, sizeof(commandTopic), "%s/command", clientName.c_str());
     snprintf(statusTopic, sizeof(statusTopic), "%s/status", clientName.c_str());
     snprintf(rgbTopic, sizeof(rgbTopic), "%s/rgb", clientName.c_str());
-}
-
-void handleNetwork() {
-    const uint32_t now = millis();
-    if (now - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
-        if (WiFi.status() != WL_CONNECTED) {
-            reconnectWiFi();
-        }
-        lastWiFiCheck = now;
-    }
-    if (!mqttClient.connected() && (now - lastReconnectAttempt > 5000)) {
-        connectMQTT();
-        lastReconnectAttempt = now;
-    }
 }
 
 void handleStatusUpdates() {
