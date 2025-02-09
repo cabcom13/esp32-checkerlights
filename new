@@ -1,7 +1,8 @@
 #include <WiFi.h>
+#include <WiFiManager.h>    
 #include <MQTTClient.h>
 #include <IRremote.hpp>
-#include <WebOTA.h>
+// #include <WebOTA.h>
 #include <Preferences.h>
 #include <array>
 
@@ -9,23 +10,28 @@
 #define WDT_TIMEOUT 30
 
 // Konfiguration
-constexpr const char* DEFAULT_SSID = "TP-LINK_B383_u1";
+constexpr const char* DEFAULT_SSID     = "TP-LINK_B383_u1";
 constexpr const char* DEFAULT_PASSWORD = "";
-constexpr const char* MQTT_SERVER = "192.168.0.101";
-constexpr uint16_t MQTT_PORT = 1883;
-constexpr uint8_t MQTT_MAX_RETRIES = 5;
-constexpr uint32_t SEND_INTERVAL = 10000;
+constexpr const char* MQTT_SERVER      = "192.168.0.101";
+
+constexpr const char* ESPNAME      = "W7A";
+
+constexpr uint16_t MQTT_PORT         = 1883;
+constexpr uint8_t MQTT_MAX_RETRIES   = 5;
+constexpr uint32_t SEND_INTERVAL     = 10000;
 constexpr uint32_t WIFI_CHECK_INTERVAL = 60000;
 
 // Hardware-Pins
-constexpr uint8_t RED_PIN = 15;
-constexpr uint8_t BLUE_PIN = 5;
-constexpr uint8_t GREEN_PIN = 4;
+constexpr uint8_t RED_PIN     = 15;
+constexpr uint8_t BLUE_PIN    = 5;
+constexpr uint8_t GREEN_PIN   = 4;
 constexpr uint8_t IR_RECV_PIN = 18;
 
 // IR Commands
-uint32_t tlCommand = 0x0;
-uint32_t normalCommand = 0x9;
+// uint32_t tlCommand     = 0x0;
+constexpr const char* TLCOMMAND     = "0x0";
+constexpr const char* NMCOMMAND     = "0x0";
+// uint32_t normalCommand = 0x9;
 
 // Farbdefinitionen
 struct Color {
@@ -36,31 +42,38 @@ struct Color {
 };
 
 constexpr std::array<Color, 8> COLORS = {{
-    {"red", 255, 0, 0},
-    {"yellow", 255, 70, 0},
-    {"green", 0, 255, 0},
-    {"blue", 0, 0, 255},
-    {"cyan", 0, 255, 255},
-    {"magenta", 255, 0, 255},
-    {"white", 255, 255, 150},
-    {"off", 0, 0, 0}
+    {"red",     255, 0,   0},
+    {"yellow",  255, 70,  0},
+    {"green",   0,   255, 0},
+    {"blue",    0,   0,   255},
+    {"cyan",    0,   255, 255},
+    {"magenta", 255, 0,   255},
+    {"white",   255, 255, 150},
+    {"off",     0,   0,   0}
 }};
 
 // Globale Objekte
+WiFiManager wifiManager;
 WiFiClient espClient;
 MQTTClient mqttClient(256);
 IRrecv irrecv(IR_RECV_PIN);
 Preferences preferences;
-WebOTA webOTA;
+// WebOTA webOTA;
 
+
+WiFiManagerParameter custom_mqtt_server("server", "mqtt server", MQTT_SERVER, 40);
+WiFiManagerParameter custom_esp_name("espname", "esp name", ESPNAME, 40);
+WiFiManagerParameter custom_tl_command("tlcommand", "tl command", TLCOMMAND, 40);
+WiFiManagerParameter custom_nm_command("normalcommand", "normal command", NMCOMMAND, 40);
 
 // Zustandsvariablen
 enum class DeviceState { NORMAL, STANDBY, AP_MODE };
 DeviceState currentState = DeviceState::NORMAL;
 size_t currentColorIndex = 6; // Start mit Weiß
-uint32_t lastSendTime = 0;
-uint32_t lastWiFiCheck = 0;
+uint32_t lastSendTime         = 0;
+uint32_t lastWiFiCheck        = 0;
 uint32_t lastReconnectAttempt = 0;
+bool res;
 
 // MQTT Topics
 char commandTopic[50];
@@ -70,25 +83,55 @@ char rgbTopic[50];
 // Prototypen
 void setColor(size_t index, bool save = false);
 void setColor1(uint32_t color);
+void loadConfiguration();
+void setupTopics();
+void setupWiFi();
+bool waitForConnection(uint32_t timeout);
+void indicateConnectionProgress();
+void reconnectWiFi();
+void startAPMode();
+void indicateAPMode();
+void setupMQTT();
+void connectMQTT();
+void subscribeTopics();
+void mqttCallback(String &topic, String &payload);
+void handleNetwork();
+void handleStatusUpdates();
+void handleIRReception();
+void handleTeamleadCommand();
+void handleNormalCommand();
+void flashColor(uint32_t color);
+void cycleColors();
+void sendCurrentState();
+void parseRGB(const String &payload, int* rgb);
+void handleStandby(const String &payload);
+void handleRGBCommand(const String &payload);
+void handleColorCommand(const String &payload);
+void setRGB(uint8_t r, uint8_t g, uint8_t b);
 
 void setup() {
     Serial.begin(115200);
     Serial.println("Booting...");
-    //initWatchdog();
-
     // Hardware initialisieren
     pinMode(RED_PIN, OUTPUT);
     pinMode(BLUE_PIN, OUTPUT);
     pinMode(GREEN_PIN, OUTPUT);
 
-    // Konfiguration laden
-    preferences.begin("led-state", false);
-    loadConfiguration();
+    // Preferences initialisieren und prüfen, ob Konfiguration vorliegt
+    // preferences.begin("led-state", false);
+    // if (!preferences.getBool("configured", false)) {
+    //     Serial.println("Keine Konfiguration gefunden – AP Mode aktivieren!");
+    //     startAPMode();
+    //     return;
+    // }
+
+    // Konfiguration laden & MQTT Topics setzen
+    // loadConfiguration();
     setupTopics();
 
     // Verbindungen herstellen
     setupWiFi();
-    setupMQTT();
+
     
     // IR-Empfänger starten
     IrReceiver.begin(IR_RECV_PIN);
@@ -98,25 +141,29 @@ void setup() {
 }
 
 void loop() {
-    // esp_task_wdt_reset();
-    webOTA.handle();
-    mqttClient.loop();
+    // webOTA.handle();
     
     handleIRReception();
-    handleNetwork();
+    wifiManager.process();
+
+    // wifiManager.startConfigPortal("OnDemandAP");
+    // handleNetwork();
+    mqttClient.loop();
     handleStatusUpdates();
 }
 
 // ---------- Hilfsfunktionen ----------
 void loadConfiguration() {
-    String clientName = preferences.getString("espClientName", "default");
+    // Separat ausgelesene Werte (Namen, WiFi-Daten etc.) können hier genutzt werden, wenn nötig
+    String espClientName = custom_esp_name.getValue();
+      
     currentColorIndex = preferences.getUChar("lastColor", 6);
-    tlCommand = preferences.getUInt("IR_TL_COMMAND", 0x0);
-    normalCommand = preferences.getUInt("IR_COMMAND", 0x9);
+
+   
 }
 
 void setupTopics() {
-    const String clientName = preferences.getString("espClientName", "default");
+    const String clientName = custom_esp_name.getValue();
     snprintf(commandTopic, sizeof(commandTopic), "%s/command", clientName.c_str());
     snprintf(statusTopic, sizeof(statusTopic), "%s/status", clientName.c_str());
     snprintf(rgbTopic, sizeof(rgbTopic), "%s/rgb", clientName.c_str());
@@ -124,14 +171,12 @@ void setupTopics() {
 
 void handleNetwork() {
     const uint32_t now = millis();
-    
     if (now - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
         if (WiFi.status() != WL_CONNECTED) {
             reconnectWiFi();
         }
         lastWiFiCheck = now;
     }
-
     if (!mqttClient.connected() && (now - lastReconnectAttempt > 5000)) {
         connectMQTT();
         lastReconnectAttempt = now;
@@ -148,16 +193,24 @@ void handleStatusUpdates() {
 
 // ---------- WiFi-Handling ----------
 void setupWiFi() {
-    WiFi.mode(WIFI_STA);
-    WiFi.setHostname(preferences.getString("espClientName", "esp32-led").c_str());
-    WiFi.begin(preferences.getString("wifiSSID", DEFAULT_SSID).c_str(), 
-               preferences.getString("wifiPass", DEFAULT_PASSWORD).c_str());
 
-    if (waitForConnection(10000)) {
-        Serial.println("WiFi connected!");
-        Serial.println("IP: " + WiFi.localIP().toString());
-    } else {
-        startAPMode();
+    wifiManager.addParameter(&custom_mqtt_server);
+    wifiManager.addParameter(&custom_esp_name);
+    wifiManager.addParameter(&custom_tl_command);
+    wifiManager.addParameter(&custom_nm_command);
+
+   
+    wifiManager.setHostname(custom_esp_name.getValue());
+
+    res = wifiManager.autoConnect();
+    if(!res) {
+      Serial.println("Failed to connect or hit timeout");
+      // ESP.restart();
+    } 
+    else {
+      //if you get here you have connected to the WiFi    
+      wifiManager.startWebPortal();
+      setupMQTT();
     }
 }
 
@@ -174,36 +227,18 @@ bool waitForConnection(uint32_t timeout) {
 void indicateConnectionProgress() {
     static uint8_t counter = 0;
     constexpr std::array<uint32_t, 3> colors = {0xFF0000, 0x00FF00, 0x0000FF};
-    setColor(colors[counter++ % 3]);
+    // Nutze setColor mit direktem RGB-Wert
+    setColor1(colors[counter++ % 3]);
 }
 
-void reconnectWiFi() {
-    Serial.println("Reconnecting WiFi...");
-    WiFi.reconnect();
-    if (waitForConnection(10000)) {
-        currentState = DeviceState::NORMAL;
-        setColor(currentColorIndex, true);
-    }
-}
-
-void startAPMode() {
-    currentState = DeviceState::AP_MODE;
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP("ESP32-Config", "config123");
-    Serial.println("AP Mode: 192.168.4.1");
-    indicateAPMode();
-}
-
-void indicateAPMode() {
-    while (currentState == DeviceState::AP_MODE) {
-    
-        webOTA.handle();
-    }
-}
 
 // ---------- MQTT-Handling ----------
 void setupMQTT() {
-    mqttClient.begin(MQTT_SERVER, MQTT_PORT, espClient);
+    Serial.println(custom_mqtt_server.getValue());
+    Serial.println(custom_esp_name.getValue());
+
+ 
+    mqttClient.begin(MQTT_SERVER, MQTT_PORT,espClient);
     mqttClient.onMessage(mqttCallback);
     connectMQTT();
 }
@@ -211,7 +246,7 @@ void setupMQTT() {
 void connectMQTT() {
     Serial.print("Connecting to MQTT...");
     for (uint8_t i = 0; i < MQTT_MAX_RETRIES; i++) {
-        if (mqttClient.connect(preferences.getString("espClientName", "esp32-led").c_str())) {
+        if (mqttClient.connect(custom_esp_name.getValue())) {
             subscribeTopics();
             Serial.println(" connected!");
             return;
@@ -230,7 +265,6 @@ void subscribeTopics() {
 
 void mqttCallback(String &topic, String &payload) {
     Serial.printf("Message received: %s - %s\n", topic.c_str(), payload.c_str());
-
     if (topic.equalsIgnoreCase("all/standby")) {
         handleStandby(payload);
     }
@@ -247,7 +281,7 @@ void handleStandby(const String &payload) {
     currentState = payload.equalsIgnoreCase("on") ? DeviceState::STANDBY : DeviceState::NORMAL;
     if (currentState == DeviceState::STANDBY) {
         preferences.putUChar("lastColor", currentColorIndex);
-        setColor(static_cast<size_t>(7), true); // Explicit cast to resolve ambiguity
+        setColor(static_cast<size_t>(7), true);
     } else {
         setColor(currentColorIndex, true);
     }
@@ -260,7 +294,7 @@ void handleRGBCommand(const String &payload) {
 }
 
 void parseRGB(const String &payload, int* rgb) {
-    // Implementierung der RGB-Parsing Logik
+    // Hier RGB-Parsing-Logik implementieren
 }
 
 void handleColorCommand(const String &payload) {
@@ -273,89 +307,87 @@ void handleColorCommand(const String &payload) {
 }
 
 // ---------- LED-Steuerung ----------
-
 void setRGB(uint8_t r, uint8_t g, uint8_t b) {
     analogWrite(RED_PIN, r);
     analogWrite(GREEN_PIN, g);
     analogWrite(BLUE_PIN, b);
 }
+
 void setColor(size_t index, bool save) {
     if (index >= COLORS.size()) return;
-    
     currentColorIndex = index;
     const Color &c = COLORS[index];
     analogWrite(RED_PIN, c.red);
     analogWrite(GREEN_PIN, c.green);
     analogWrite(BLUE_PIN, c.blue);
-    
     if (save) {
         preferences.putUChar("lastColor", index);
     }
 }
+
 void setColor1(uint32_t color) {
-    analogWrite(RED_PIN, (color >> 16) & 0xFF);
-    analogWrite(GREEN_PIN, (color >> 8) & 0xFF);
-    analogWrite(BLUE_PIN, color & 0xFF);
+    analogWrite(RED_PIN,   (color >> 16) & 0xFF);
+    analogWrite(GREEN_PIN, (color >> 8)  & 0xFF);
+    analogWrite(BLUE_PIN,  color & 0xFF);
 }
+
 void sendCurrentState() {
     mqttClient.publish(statusTopic, COLORS[currentColorIndex].name);
 }
+
 // ---------- IR-Handling ----------
 void handleIRReception() {
+    uint32_t  tlC  = strtoul(custom_tl_command.getValue(), nullptr, 10);
+    uint32_t  nmC  = strtoul(custom_nm_command.getValue(), nullptr, 10);
     if (!IrReceiver.decode()) return;
-
     const uint32_t command = IrReceiver.decodedIRData.command;
-    if (command == tlCommand) {
+    if (command == tlC) {
         handleTeamleadCommand();
     }
-    else if (command == normalCommand) {
+    else if (command ==  nmC) {
         handleNormalCommand();
     }
-
     IrReceiver.resume();
 }
+
 void handleTeamleadCommand() {
-    // Setze die Farbe auf Grün und starte dann den Zyklus neu mit Weiß
     flashColor(0xFF00AE); // Magenta blinken
     mqttClient.publish(commandTopic, "green");
-    
-    // Verzögere den Start des nächsten Zyklus, um genug Zeit für die Erkennung zu geben
-    delay(500); 
+    delay(500);
 }
 
 void handleNormalCommand() {
     flashColor(0xFF00AE); // Magenta blinken
     cycleColors();
-    delay(500); 
+    delay(500);
 }
+
 void flashColor(uint32_t color) {
     setColor1(color);
     delay(100);
-    // setColor(currentColorIndex);
 }
 
 void cycleColors() {
     switch (currentColorIndex) {
         case 6: // Aktuell Weiß
             mqttClient.publish(commandTopic, "red");
-            // currentColorIndex = 0; // Wechsel zu Rot
             break;
         case 0: // Aktuell Rot
             mqttClient.publish(commandTopic, "yellow");
-            // currentColorIndex = 1; // Wechsel zu Orange
             break;
         case 1: // Aktuell Orange
-            // Wechsel zurück zu Rot, da Grün nur durch den TL-Befehl gesetzt werden kann
             mqttClient.publish(commandTopic, "red");
-            // currentColorIndex = 0;
             break;
         case 2:
             mqttClient.publish(commandTopic, "white");
             break;
-        // Grün (Index 2) wird hier nicht behandelt, da es nur durch den TL-Befehl gesetzt wird
+        default:
+            break;
     }
     delay(500);
-      // setColor(currentColorIndex, true);
-      // sendCurrentState();
 }
 
+// --- Hinweis: WebOTA Settings-Routen müssen in der WebOTA Bibliothek integriert sein ---
+// Beispiel: In der /settings Route werden Felder für espClientName, Host, IRCOMMAND, wifi_ssid und wifi_password angeboten.
+// Beim Absenden der Form wird in den Preferences auch "configured" auf true gesetzt.
+// Dadurch wird bei fehlender Konfiguration (Preferences "configured" == false) der AP Mode gestartet.
