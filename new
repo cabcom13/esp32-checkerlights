@@ -1,8 +1,7 @@
 #include <WiFi.h>
-#include <WiFiManager.h>    
+#include <WiFiManager.h>
 #include <MQTTClient.h>
 #include <IRremote.hpp>
-// #include <WebOTA.h>
 #include <Preferences.h>
 #include <array>
 
@@ -13,8 +12,7 @@
 constexpr const char* DEFAULT_SSID     = "TP-LINK_B383_u1";
 constexpr const char* DEFAULT_PASSWORD = "";
 constexpr const char* MQTT_SERVER      = "192.168.0.101";
-
-constexpr const char* ESPNAME      = "W7A";
+constexpr const char* ESPNAME          = "WTEST";
 
 constexpr uint16_t MQTT_PORT         = 1883;
 constexpr uint8_t MQTT_MAX_RETRIES   = 5;
@@ -28,50 +26,47 @@ constexpr uint8_t GREEN_PIN   = 4;
 constexpr uint8_t IR_RECV_PIN = 18;
 
 // IR Commands
-// uint32_t tlCommand     = 0x0;
 constexpr const char* TLCOMMAND     = "0x0";
 constexpr const char* NMCOMMAND     = "0x0";
-// uint32_t normalCommand = 0x9;
 
 // Farbdefinitionen
 struct Color {
-    const char* name;
-    uint8_t red;
-    uint8_t green;
-    uint8_t blue;
+  const char* name;
+  uint8_t red;
+  uint8_t green;
+  uint8_t blue;
 };
 
 constexpr std::array<Color, 8> COLORS = {{
-    {"red",     255, 0,   0},
-    {"yellow",  255, 70,  0},
-    {"green",   0,   255, 0},
-    {"blue",    0,   0,   255},
-    {"cyan",    0,   255, 255},
-    {"magenta", 255, 0,   255},
-    {"white",   255, 255, 150},
-    {"off",     0,   0,   0}
+  {"red",     255, 0,   0},
+  {"yellow",  255, 70,  0},
+  {"green",   0,   255, 0},
+  {"blue",    0,   0,   255},
+  {"cyan",    0,   255, 255},
+  {"magenta", 255, 0,   255},
+  {"white",   255, 255, 150},
+  {"off",     0,   0,   0}
 }};
 
 // Globale Objekte
 WiFiManager wifiManager;
 WiFiClient espClient;
 MQTTClient mqttClient(256);
-IRrecv irrecv(IR_RECV_PIN);
+IRrecv myIrrecv(IR_RECV_PIN);
 Preferences preferences;
-// WebOTA webOTA;
-
 
 WiFiManagerParameter custom_mqtt_server("server", "mqtt server", MQTT_SERVER, 40);
 WiFiManagerParameter custom_esp_name("espname", "esp name", ESPNAME, 40);
 WiFiManagerParameter custom_tl_command("tlcommand", "tl command", TLCOMMAND, 40);
 WiFiManagerParameter custom_nm_command("normalcommand", "normal command", NMCOMMAND, 40);
 
-// Zustandsvariablen
+bool shouldSaveConfig = false;
+
 enum class DeviceState { NORMAL, STANDBY, AP_MODE };
 DeviceState currentState = DeviceState::NORMAL;
 size_t currentColorIndex = 6; // Start mit Weiß
-uint32_t lastSendTime         = 0;
-uint32_t lastWiFiCheck        = 0;
+uint32_t lastSendTime = 0;
+uint32_t lastWiFiCheck = 0;
 uint32_t lastReconnectAttempt = 0;
 bool res;
 
@@ -109,271 +104,279 @@ void handleRGBCommand(const String &payload);
 void handleColorCommand(const String &payload);
 void setRGB(uint8_t r, uint8_t g, uint8_t b);
 
-void setup() {
-    Serial.begin(115200);
-    Serial.println("Booting...");
-    // Hardware initialisieren
-    pinMode(RED_PIN, OUTPUT);
-    pinMode(BLUE_PIN, OUTPUT);
-    pinMode(GREEN_PIN, OUTPUT);
-
-    // Preferences initialisieren und prüfen, ob Konfiguration vorliegt
-    // preferences.begin("led-state", false);
-    // if (!preferences.getBool("configured", false)) {
-    //     Serial.println("Keine Konfiguration gefunden – AP Mode aktivieren!");
-    //     startAPMode();
-    //     return;
-    // }
-
-    // Konfiguration laden & MQTT Topics setzen
-    // loadConfiguration();
-    setupTopics();
-
-    // Verbindungen herstellen
-    setupWiFi();
-
-    
-    // IR-Empfänger starten
-    IrReceiver.begin(IR_RECV_PIN);
-
-    // Letzte Farbe wiederherstellen
-    setColor(currentColorIndex, true);
+void saveConfigCallback() {
+  Serial.println("Config geändert, speichere...");
+  shouldSaveConfig = true;
 }
 
-void loop() {
-    // webOTA.handle();
-    
-    handleIRReception();
-    wifiManager.process();
-
-    // wifiManager.startConfigPortal("OnDemandAP");
-
-    mqttClient.loop();
-    handleStatusUpdates();
-}
-
-// ---------- Hilfsfunktionen ----------
 void loadConfiguration() {
-    // Separat ausgelesene Werte (Namen, WiFi-Daten etc.) können hier genutzt werden, wenn nötig
-    String espClientName = custom_esp_name.getValue();
-      
-    currentColorIndex = preferences.getUChar("lastColor", 6);
+  preferences.begin("config", true);
+  String mqtt_server = preferences.getString("mqtt_server", MQTT_SERVER);
+  String esp_name    = preferences.getString("esp_name", ESPNAME);
+  String tl_command  = preferences.getString("tl_command", TLCOMMAND);
+  String nm_command  = preferences.getString("nm_command", NMCOMMAND);
+  currentColorIndex  = preferences.getUChar("lastColor", 6);
+  preferences.end();
 
-   
+  custom_mqtt_server.setValue(mqtt_server.c_str(), mqtt_server.length() + 1);
+  custom_esp_name.setValue(esp_name.c_str(), esp_name.length() + 1);
+  custom_tl_command.setValue(tl_command.c_str(), tl_command.length() + 1);
+  custom_nm_command.setValue(nm_command.c_str(), nm_command.length() + 1);
 }
 
 void setupTopics() {
-    const String clientName = custom_esp_name.getValue();
-    snprintf(commandTopic, sizeof(commandTopic), "%s/command", clientName.c_str());
-    snprintf(statusTopic, sizeof(statusTopic), "%s/status", clientName.c_str());
-    snprintf(rgbTopic, sizeof(rgbTopic), "%s/rgb", clientName.c_str());
-}
-
-void handleStatusUpdates() {
-    const uint32_t now = millis();
-    if (now - lastSendTime >= SEND_INTERVAL) {
-        sendCurrentState();
-        lastSendTime = now;
-    }
-}
-
-// ---------- WiFi-Handling ----------
-void setupWiFi() {
-
-    wifiManager.addParameter(&custom_mqtt_server);
-    wifiManager.addParameter(&custom_esp_name);
-    wifiManager.addParameter(&custom_tl_command);
-    wifiManager.addParameter(&custom_nm_command);
-
-   
-    wifiManager.setHostname(custom_esp_name.getValue());
-
-    res = wifiManager.autoConnect();
-    if(!res) {
-      Serial.println("Failed to connect or hit timeout");
-      // ESP.restart();
-    } 
-    else {
-      //if you get here you have connected to the WiFi    
-      wifiManager.startWebPortal();
-      setupMQTT();
-    }
+  String clientName = custom_esp_name.getValue();
+  snprintf(commandTopic, sizeof(commandTopic), "%s/command", clientName.c_str());
+  snprintf(statusTopic, sizeof(statusTopic), "%s/status", clientName.c_str());
+  snprintf(rgbTopic, sizeof(rgbTopic), "%s/rgb", clientName.c_str());
 }
 
 bool waitForConnection(uint32_t timeout) {
-    const uint32_t start = millis();
-    while (millis() - start < timeout) {
-        if (WiFi.status() == WL_CONNECTED) return true;
-        indicateConnectionProgress();
-        delay(500);
-    }
-    return false;
+  uint32_t start = millis();
+  while (millis() - start < timeout) {
+    if (WiFi.status() == WL_CONNECTED)
+      return true;
+    indicateConnectionProgress();
+    delay(500);
+  }
+  return false;
 }
 
 void indicateConnectionProgress() {
-    static uint8_t counter = 0;
-    constexpr std::array<uint32_t, 3> colors = {0xFF0000, 0x00FF00, 0x0000FF};
-    // Nutze setColor mit direktem RGB-Wert
-    setColor1(colors[counter++ % 3]);
+  static uint8_t counter = 0;
+  constexpr std::array<uint32_t, 3> colors = { 0xFF0000, 0x00FF00, 0x0000FF };
+  setColor1(colors[counter++ % 3]);
 }
 
+void reconnectWiFi() {
+  Serial.println("Reconnecting WiFi...");
+  WiFi.reconnect();
+}
 
-// ---------- MQTT-Handling ----------
+void startAPMode() {
+  Serial.println("Starte AP Mode...");
+  // AP Mode Logik hier implementieren
+}
+
+void indicateAPMode() {
+  Serial.println("AP Mode aktiv");
+}
+
 void setupMQTT() {
-    Serial.println(custom_mqtt_server.getValue());
-    Serial.println(custom_esp_name.getValue());
-
- 
-    mqttClient.begin(MQTT_SERVER, MQTT_PORT,espClient);
-    mqttClient.onMessage(mqttCallback);
-    connectMQTT();
+  Serial.println(custom_mqtt_server.getValue());
+  Serial.println(custom_esp_name.getValue());
+  mqttClient.begin(MQTT_SERVER, MQTT_PORT, espClient);
+  mqttClient.onMessage(mqttCallback);
+  connectMQTT();
 }
 
 void connectMQTT() {
-    Serial.print("Connecting to MQTT...");
-    for (uint8_t i = 0; i < MQTT_MAX_RETRIES; i++) {
-        if (mqttClient.connect(custom_esp_name.getValue())) {
-            subscribeTopics();
-            Serial.println(" connected!");
-            return;
-        }
-        delay(1000);
+  Serial.print("Connecting to MQTT...");
+  for (uint8_t i = 0; i < MQTT_MAX_RETRIES; i++) {
+    if (mqttClient.connect(custom_esp_name.getValue())) {
+      subscribeTopics();
+      Serial.println(" connected!");
+      return;
     }
-    Serial.println(" failed!");
+    delay(1000);
+  }
+  Serial.println(" failed!");
 }
 
 void subscribeTopics() {
-    mqttClient.subscribe(commandTopic);
-    mqttClient.subscribe(rgbTopic);
-    mqttClient.subscribe("all/standby");
-    mqttClient.subscribe("all/command");
+  mqttClient.subscribe(commandTopic);
+  mqttClient.subscribe(rgbTopic);
+  mqttClient.subscribe("all/standby");
+  mqttClient.subscribe("all/command");
 }
 
 void mqttCallback(String &topic, String &payload) {
-    Serial.printf("Message received: %s - %s\n", topic.c_str(), payload.c_str());
-    if (topic.equalsIgnoreCase("all/standby")) {
-        handleStandby(payload);
-    }
-    else if (topic.equalsIgnoreCase(rgbTopic)) {
-        handleRGBCommand(payload);
-    }
-    else {
-        handleColorCommand(payload);
-    }
+  if (topic.equalsIgnoreCase("all/standby")) {
+    handleStandby(payload);
+  } else if (topic.equalsIgnoreCase(rgbTopic)) {
+    handleRGBCommand(payload);
+  } else {
+    handleColorCommand(payload);
+  }
 }
 
-// ---------- Befehlshandling ----------
-void handleStandby(const String &payload) {
-    currentState = payload.equalsIgnoreCase("on") ? DeviceState::STANDBY : DeviceState::NORMAL;
-    if (currentState == DeviceState::STANDBY) {
-        preferences.putUChar("lastColor", currentColorIndex);
-        setColor(static_cast<size_t>(7), true);
-    } else {
-        setColor(currentColorIndex, true);
-    }
+void handleNetwork() {
+  // Dummy-Implementierung, falls benötigt
 }
 
-void handleRGBCommand(const String &payload) {
-    int rgb[3];
-    parseRGB(payload, rgb);
-    setRGB(rgb[0], rgb[1], rgb[2]);
+void handleStatusUpdates() {
+  uint32_t now = millis();
+  if (now - lastSendTime >= SEND_INTERVAL) {
+    sendCurrentState();
+    lastSendTime = now;
+  }
 }
 
-void parseRGB(const String &payload, int* rgb) {
-    // Hier RGB-Parsing-Logik implementieren
-}
-
-void handleColorCommand(const String &payload) {
-    for (size_t i = 0; i < COLORS.size(); i++) {
-        if (payload.equalsIgnoreCase(COLORS[i].name)) {
-            setColor(i, true);
-            break;
-        }
-    }
-}
-
-// ---------- LED-Steuerung ----------
-void setRGB(uint8_t r, uint8_t g, uint8_t b) {
-    analogWrite(RED_PIN, r);
-    analogWrite(GREEN_PIN, g);
-    analogWrite(BLUE_PIN, b);
-}
-
-void setColor(size_t index, bool save) {
-    if (index >= COLORS.size()) return;
-    currentColorIndex = index;
-    const Color &c = COLORS[index];
-    analogWrite(RED_PIN, c.red);
-    analogWrite(GREEN_PIN, c.green);
-    analogWrite(BLUE_PIN, c.blue);
-    if (save) {
-        preferences.putUChar("lastColor", index);
-    }
-}
-
-void setColor1(uint32_t color) {
-    analogWrite(RED_PIN,   (color >> 16) & 0xFF);
-    analogWrite(GREEN_PIN, (color >> 8)  & 0xFF);
-    analogWrite(BLUE_PIN,  color & 0xFF);
-}
-
-void sendCurrentState() {
-    mqttClient.publish(statusTopic, COLORS[currentColorIndex].name);
-}
-
-// ---------- IR-Handling ----------
 void handleIRReception() {
-    uint32_t  tlC  = strtoul(custom_tl_command.getValue(), nullptr, 10);
-    uint32_t  nmC  = strtoul(custom_nm_command.getValue(), nullptr, 10);
-    if (!IrReceiver.decode()) return;
-    const uint32_t command = IrReceiver.decodedIRData.command;
-    if (command == tlC) {
-        handleTeamleadCommand();
-    }
-    else if (command ==  nmC) {
-        handleNormalCommand();
-    }
-    IrReceiver.resume();
+  uint32_t tlC = strtoul(custom_tl_command.getValue(), nullptr, 10);
+  uint32_t nmC = strtoul(custom_nm_command.getValue(), nullptr, 10);
+  if (!myIrrecv.decode())
+    return;
+  uint32_t command = myIrrecv.decodedIRData.command;
+  // Serial.println(command);
+  if (command == tlC) {
+    handleTeamleadCommand();
+  } else if (command == nmC) {
+    handleNormalCommand();
+  }
+
+  myIrrecv.resume();
 }
 
 void handleTeamleadCommand() {
-    flashColor(0xFF00AE); // Magenta blinken
-    mqttClient.publish(commandTopic, "green");
-    delay(500);
+  flashColor(0xFF00AE);
+  mqttClient.publish(commandTopic, "green");
+
 }
 
 void handleNormalCommand() {
-    flashColor(0xFF00AE); // Magenta blinken
-    cycleColors();
-    delay(500);
+  flashColor(0xFF00AE);
+  cycleColors();
+
 }
 
 void flashColor(uint32_t color) {
-    setColor1(color);
-    delay(100);
+  setColor1(color);
+
 }
 
 void cycleColors() {
-    switch (currentColorIndex) {
-        case 6: // Aktuell Weiß
-            mqttClient.publish(commandTopic, "red");
-            break;
-        case 0: // Aktuell Rot
-            mqttClient.publish(commandTopic, "yellow");
-            break;
-        case 1: // Aktuell Orange
-            mqttClient.publish(commandTopic, "red");
-            break;
-        case 2:
-            mqttClient.publish(commandTopic, "white");
-            break;
-        default:
-            break;
-    }
-    delay(500);
+  switch (currentColorIndex) {
+    case 6:
+      mqttClient.publish(commandTopic, "red");
+      break;
+    case 0:
+      mqttClient.publish(commandTopic, "yellow");
+      break;
+    case 1:
+      mqttClient.publish(commandTopic, "red");
+      break;
+    case 2:
+      mqttClient.publish(commandTopic, "white");
+      break;
+    default:
+      break;
+  }
+  delay(500);
 }
 
-// --- Hinweis: WebOTA Settings-Routen müssen in der WebOTA Bibliothek integriert sein ---
-// Beispiel: In der /settings Route werden Felder für espClientName, Host, IRCOMMAND, wifi_ssid und wifi_password angeboten.
-// Beim Absenden der Form wird in den Preferences auch "configured" auf true gesetzt.
-// Dadurch wird bei fehlender Konfiguration (Preferences "configured" == false) der AP Mode gestartet.
+void sendCurrentState() {
+  mqttClient.publish(statusTopic, COLORS[currentColorIndex].name);
+}
+
+void parseRGB(const String &payload, int* rgb) {
+  int firstComma = payload.indexOf(',');
+  int lastComma  = payload.lastIndexOf(',');
+  if (firstComma > 0 && lastComma > firstComma) {
+    rgb[0] = payload.substring(0, firstComma).toInt();
+    rgb[1] = payload.substring(firstComma + 1, lastComma).toInt();
+    rgb[2] = payload.substring(lastComma + 1).toInt();
+  }
+}
+
+void handleStandby(const String &payload) {
+  currentState = payload.equalsIgnoreCase("on") ? DeviceState::STANDBY : DeviceState::NORMAL;
+  if (currentState == DeviceState::STANDBY) {
+    preferences.begin("config", false);
+    preferences.putUChar("lastColor", currentColorIndex);
+    preferences.end();
+    setColor(7, true);
+  } else {
+    setColor(currentColorIndex, true);
+  }
+}
+
+void handleRGBCommand(const String &payload) {
+  int rgb[3] = {0, 0, 0};
+  parseRGB(payload, rgb);
+  setRGB(rgb[0], rgb[1], rgb[2]);
+}
+
+void handleColorCommand(const String &payload) {
+  for (size_t i = 0; i < COLORS.size(); i++) {
+    if (payload.equalsIgnoreCase(COLORS[i].name)) {
+      setColor(i, true);
+      break;
+    }
+  }
+}
+
+void setRGB(uint8_t r, uint8_t g, uint8_t b) {
+  analogWrite(RED_PIN, r);
+  analogWrite(GREEN_PIN, g);
+  analogWrite(BLUE_PIN, b);
+}
+
+void setColor(size_t index, bool save) {
+  if (index >= COLORS.size())
+    return;
+  currentColorIndex = index;
+  const Color &c = COLORS[index];
+  analogWrite(RED_PIN, c.red);
+  analogWrite(GREEN_PIN, c.green);
+  analogWrite(BLUE_PIN, c.blue);
+  if (save) {
+    preferences.begin("config", false);
+    preferences.putUChar("lastColor", index);
+    preferences.end();
+  }
+}
+
+void setColor1(uint32_t color) {
+  analogWrite(RED_PIN,   (color >> 16) & 0xFF);
+  analogWrite(GREEN_PIN, (color >> 8)  & 0xFF);
+  analogWrite(BLUE_PIN,  color & 0xFF);
+}
+
+void setupWiFi() {
+  wifiManager.addParameter(&custom_mqtt_server);
+  wifiManager.addParameter(&custom_esp_name);
+  wifiManager.addParameter(&custom_tl_command);
+  wifiManager.addParameter(&custom_nm_command);
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
+  wifiManager.setHostname(custom_esp_name.getValue());
+
+  res = wifiManager.autoConnect();
+  if (!res) {
+    Serial.println("Failed to connect or hit timeout");
+    ESP.restart();
+  } else {
+    wifiManager.startWebPortal();
+    if (shouldSaveConfig) {
+      preferences.begin("config", false);
+      preferences.putString("mqtt_server", custom_mqtt_server.getValue());
+      preferences.putString("esp_name", custom_esp_name.getValue());
+      preferences.putString("tl_command", custom_tl_command.getValue());
+      preferences.putString("nm_command", custom_nm_command.getValue());
+      preferences.end();
+    }
+    setupMQTT();
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Booting...");
+  pinMode(RED_PIN, OUTPUT);
+  pinMode(BLUE_PIN, OUTPUT);
+  pinMode(GREEN_PIN, OUTPUT);
+
+  loadConfiguration();
+  setupTopics();
+  setupWiFi();
+
+  myIrrecv.begin(IR_RECV_PIN);
+  setColor(currentColorIndex, true);
+}
+
+void loop() {
+  handleIRReception();
+  wifiManager.process();
+  mqttClient.loop();
+  handleStatusUpdates();
+}
