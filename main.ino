@@ -299,4 +299,3 @@ void handleIRReception() {
     delay(500);
     IrReceiver.resume();
 }
-
