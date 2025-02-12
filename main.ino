@@ -1,7 +1,7 @@
 #include <IRremote.hpp>
 #include <Preferences.h>
 #include <array>
-#include <BluetoothSerial.h>
+// #include <BluetoothSerial.h>
 #include <WiFi.h>
 #include <MQTTClient.h>
 #include <WebOTA.h>
@@ -24,7 +24,8 @@ constexpr std::array<Color, 8> COLORS = {{
     {"white",   255, 255, 150},
     {"off",     0,   0,   0}
 }};
-
+// Definiere eine Task-Handle für MQTT
+TaskHandle_t mqttTaskHandle = NULL;
 // IR Commands
 constexpr const char* tlcommand     = "7";
 constexpr const char* nmcommand     = "9";
@@ -49,7 +50,7 @@ IRrecv irrecv(IR_RECV_PIN);
 Preferences preferences;
 WiFiClient wificlient;
 MQTTClient mqttClient(256);
-BluetoothSerial SerialBT;
+// BluetoothSerial SerialBT;
 
 bool otaEnabled = false;
 // Zustandsvariablen
@@ -65,15 +66,21 @@ void setup() {
 
     // Wenn SSID, Passwort und ESPName in Preferences gespeichert sind, verwende sie
     espname = preferences.getString("espname", "ESP32_Default");
+ 
+    if (espname.isEmpty()) {
+      espname = "ESP32_" + String(random(1000, 9999));
+      preferences.putString("espname", espname);
+    }
+
     String ssid = preferences.getString("wifi_ssid", "");
-  
     String password = preferences.getString("wifi_password", "");
     String tlcommand = preferences.getString("tlcommand", "7");
     String nmcommand = preferences.getString("nmcommand", "9");
+
     Serial.begin(115200);
-    Serial.println("Booting...");
-    Serial.println( tlcommand);  
-    Serial.println( nmcommand);
+    // serial.println("Booting...");
+    // serial.println( tlcommand);  
+    // serial.println( nmcommand);
     // Hardware initialisieren
     pinMode(RED_PIN, OUTPUT);
     pinMode(BLUE_PIN, OUTPUT);
@@ -83,6 +90,17 @@ void setup() {
     digitalWrite(RED_PIN, LOW);
     digitalWrite(BLUE_PIN, LOW);
     digitalWrite(GREEN_PIN, LOW);
+
+    // Starte MQTT-Task
+    xTaskCreatePinnedToCore(
+      mqttLoopTask,          // Task Funktion
+      "MQTT Loop Task",      // Task Name
+      4096,                  // Stack Größe
+      NULL,                  // Parameter
+      1,                     // Priorität
+      &mqttTaskHandle,       // Task Handle
+      1                      // Core (1 ist der zweite Core des ESP32)
+    );
 
     // IR-Empfänger stac:\Users\cabco\OneDrive\Dokumente\Arduino\libraries\ESP32-OTA\src\WebOTA.cpprten
     IrReceiver.begin(IR_RECV_PIN);
@@ -95,51 +113,91 @@ void setup() {
             flashColor(0xFF00AE);
             delay(1000);
             flashColor(0x000000);
-            Serial.print(".");
+            // serial.print(".");
             attempts++;
         }
 
         if (WiFi.status() == WL_CONNECTED) {
-            Serial.println("Verbunden!");
-            Serial.println(WiFi.localIP()); // IP-Adresse
-            Serial.println(WiFi.RSSI());  // Signalstärke (dBm)
+            // serial.println("Verbunden!");
+            // serial.println(WiFi.localIP()); // IP-Adresse
+            // serial.println(WiFi.RSSI());  // Signalstärke (dBm)
             int mqattempts = 0;
+             mqttClient.begin(MQTT_SERVER.c_str(), wificlient);
              mqttClient.setKeepAlive(120);
-             while (!mqttClient.connected() && mqattempts < 10){ 
-                mqttClient.begin(MQTT_SERVER.c_str(), wificlient);
+             mqttClient.onMessage(mqttCallback);
+           
+             // serial.println("Verbinde MQTT");
+             while (!mqttClient.connected() && mqattempts < 10){
+                // serial.print(" .");
+                mqttClient.connect(espname.c_str()); 
                 mqattempts++;
+                if(mqttClient.connected()){   
+                    mqttClient.subscribe((String(espname) + "/command"), 0);         
+                    mqttClient.publish((espname + "/status").c_str(), "online", false, 0);
+                    sendCurrentState();
+                    mqattempts = 0;
+                    mqttconnected = true;
+                } else {
+                    // serial.println(mqttClient.lastError());
+                    mqttconnected = false;
+                }
+                delay(1000);
              }
-             if(mqttClient.connected()){
-                mqttClient.onMessage(mqttCallback);
-                mqttClient.subscribe((String(MQTT_SERVER) + "/command"), 0);
-                mqttconnected = true;
-             } else {
-                mqttconnected = false;
-             }
-
 
             res = true;
         } else {
             res = false;
-            SerialBT.begin(espname); // Bluetooth starten
-            SerialBT.println("WLAN-Verbindung fehlgeschlagen. Starte Bluetooth...");
+            WiFi.softAP(espname.c_str());
+            otaEnabled = true;
+            // serial.print("AP gestartet: ");
+            // serial.println(espname);
+            // serial.print("IP Adresse: ");
+            // serial.println(WiFi.softAPIP());
         }
     } else {
         res = false;
-        SerialBT.begin(espname); // Bluetooth starten
-        SerialBT.println("Kein gespeichertes WLAN gefunden. Warten auf Bluetooth-Befehl...");
+        WiFi.softAP(espname.c_str());
+        otaEnabled = true;
+        // serial.print("AP gestartet: ");
+        // serial.println(espname);
+        // serial.print("IP Adresse: ");
+        // serial.println(WiFi.softAPIP());
     }
     // Letzte Farbe wiederherstellen
     setColor(currentColorIndex, true); 
 }
 
-
-
-void mqttCallback(String &topic, String &payload) {
+void sendCurrentState() {
+  
+  mqttClient.publish((espname + "/status").c_str(), COLORS[currentColorIndex].name, false, 0);
 
 }
 
+void mqttCallback(String &topic, String &payload) {
+// red:0
+// yellow: 1
+// green: 2
+// blue: 3
+// cyan: 4
+// magenta: 5
+// white: 6
+// off: 7
+  // serial.println(payload);
+    if (payload == "red") setColor(0, true);   
+    else if (payload == "yellow") setColor(1, true); 
+    else if (payload == "green") setColor(2, true); 
+    else if (payload == "blue") setColor(3, true); 
+    else if (payload == "cyan") setColor(4, true); 
+    else if (payload == "magenta") setColor(5, true); 
+    else if (payload == "white") setColor(6, true); 
+    else if (payload == "off") setColor(7, true); 
+    else if (payload == "wiyc") sendCurrentState();
+    else if (payload == "standbyon") flashColor(0x000000);
+    else if (payload == "standbyoff") setColor(currentColorIndex, true); 
+}
+
 void loop() {
+
   if(res == false){
     flashColor(0x004cff);
     delay(100);
@@ -160,57 +218,25 @@ void loop() {
   // OTA Updates behandeln
   if(WiFi.status() == WL_CONNECTED){
       webota.handle();
-      mqttClient.loop();
+      // mqttClient.loop();
   }
-  
-if (SerialBT.available()) {
-    String command = SerialBT.readStringUntil('\n');
-    command.trim();
-    SerialBT.println("Empfangen: " + command);
-   if (command.startsWith("espname:")) {
-        String espname = command.substring(8);
-        preferences.putString("espname", espname);
-        SerialBT.println("Neuer ESPName gespeichert: " + espname);
-    } else if (command.startsWith("wifi_ssid:")) {
-        String ssid = command.substring(10);
-        preferences.putString("wifi_ssid", ssid);
-        SerialBT.println("SSID gespeichert: " + ssid);
-    } else if (command.startsWith("wifi_password:")) {
-        String password = command.substring(14);
-        preferences.putString("wifi_password", password);
-        SerialBT.println("Passwort gespeichert: ***");
-    } else if (command.startsWith("tlcommand:")) {
-        String tlcommand = command.substring(10);
-        preferences.putString("tlcommand", tlcommand);
-        SerialBT.println("TL Command saved");
-    } else if (command.startsWith("nmcommand:")) {
-        String tlcommand = command.substring(10);
-        preferences.putString("nmcommand", nmcommand);
-        SerialBT.println("NM Command saved");
-    } else if (command ="restart") {
-        ESP.restart();
-    } else if (command.startsWith("wifi_start")) {
-        // Stelle sicher, dass sowohl SSID als auch Passwort vorhanden sind
-        String ssid = preferences.getString("wifi_ssid", "");
-        String password = preferences.getString("wifi_password", "");
 
-            SerialBT.println("Versuche Verbindung...");
-            WiFi.begin(ssid.c_str(), password.c_str());
-            while (WiFi.status() != WL_CONNECTED) {
-                delay(1000);
-                SerialBT.print(".");
-            }
-            SerialBT.println("\nVerbunden!");
-            SerialBT.println(WiFi.localIP());         // IP-Adresse
-            SerialBT.println(WiFi.RSSI());            // Signalstärke (dBm)
-
-            res = true;
-    }   
+  if(otaEnabled){
+    webota.handle();
+  }
+  delay(10);
 }
-  
+// MQTT-Loop als FreeRTOS-Task
+void mqttLoopTask(void *parameter) {
+  while (true) {
+    if (mqttconnected) {
+      mqttClient.loop();
+    }
+    delay(10); // Wartezeit, um CPU zu entlasten
+  }
 }
-
 void cycleColors() {
+  
     switch (currentColorIndex) {
         case 6: // Aktuell Weiß
             setColor(0, true); 
@@ -227,6 +253,7 @@ void cycleColors() {
         default:
             break;
     }
+    sendCurrentState();
     delay(500);
 }
 
