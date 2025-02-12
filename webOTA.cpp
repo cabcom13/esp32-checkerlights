@@ -331,6 +331,8 @@ int WebOTA::add_http_routes(WebServer *server, const char *path) {
 		String mqttserver = preferences.getString("mqttserver", "192.168.0.101");
 		
 		String wifi_ssid = preferences.getString("wifi_ssid", "default");
+        String wifi_password = preferences.getString("wifi_password", "default");
+
 		String tlcommand = preferences.getString("tlcommand", "7");
 		String nmcommand = preferences.getString("nmcommand", "9");
         
@@ -342,6 +344,7 @@ int WebOTA::add_http_routes(WebServer *server, const char *path) {
         ir_html += "<title>ESP Settings</title><link rel=\"stylesheet\" href=\"main.css\"></head><body>";
         ir_html += "<h1>Checkerlight Settings</h1><form method=\"POST\" action=\"/sendir\">";
 		ir_html += "<label for=\"wifi_ssid\">SSID:</label><input type=\"text\" id=\"wifi_ssid\" value=\""+wifi_ssid+"\" name=\"wifi_ssid\"><br><br>";
+ir_html += "<label for=\"wifi_password\">Password:</label><input type=\"password\" id=\"wifi_password\" value=\""+wifi_password+"\" name=\"wifi_password\"><br><br>";
         ir_html += "<label for=\"espClientName\">ESP Client Name:</label><input type=\"text\" id=\"espClientName\" value=\""+espClientName+"\" name=\"espClientName\"><br><br>";
 		ir_html += "<label for=\"mqttserver\">MQTT Server IP:</label><input type=\"text\" id=\"mqttserver\" value=\""+mqttserver+"\" name=\"mqttserver\"><br><br>";
 		
@@ -366,6 +369,8 @@ int WebOTA::add_http_routes(WebServer *server, const char *path) {
         check_auth(server);
 
         String wifi_ssid = server->arg("wifi_ssid");
+        String wifi_password = server->arg("wifi_password");
+
 		String espClientName = server->arg("espClientName");
         String mqttserver = server->arg("mqttserver");
         String TLCommand = server->arg("TLCOMMAND");
@@ -381,6 +386,8 @@ int WebOTA::add_http_routes(WebServer *server, const char *path) {
 		preferences.putString("espname", espClientName);
 		preferences.putString("mqttserver", mqttserver);
 		preferences.putString("wifi_ssid", wifi_ssid);
+        preferences.putString("wifi_password", wifi_password);
+
 		preferences.putString("tlcommand", TLCommand);
 		preferences.putString("nmcommand", NMCommand);
 		preferences.end();
