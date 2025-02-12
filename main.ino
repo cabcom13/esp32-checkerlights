@@ -27,8 +27,8 @@ constexpr std::array<Color, 8> COLORS = {{
 // Definiere eine Task-Handle für MQTT
 TaskHandle_t mqttTaskHandle = NULL;
 // IR Commands
-constexpr const char* tlcommand     = "7";
-constexpr const char* nmcommand     = "9";
+String tlcommand     = "7";
+String nmcommand     = "9";
 
 // Hardware-Pins
 constexpr uint8_t RED_PIN     = 15;
@@ -74,13 +74,12 @@ void setup() {
 
     String ssid = preferences.getString("wifi_ssid", "");
     String password = preferences.getString("wifi_password", "");
-    String tlcommand = preferences.getString("tlcommand", "7");
-    String nmcommand = preferences.getString("nmcommand", "9");
+    tlcommand = preferences.getString("tlcommand", "7");
+    nmcommand = preferences.getString("nmcommand", "9");
 
     Serial.begin(115200);
     // serial.println("Booting...");
-    // serial.println( tlcommand);  
-    // serial.println( nmcommand);
+
     // Hardware initialisieren
     pinMode(RED_PIN, OUTPUT);
     pinMode(BLUE_PIN, OUTPUT);
@@ -109,7 +108,7 @@ void setup() {
         WiFi.begin(ssid.c_str(), password.c_str());
         
         int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 10) {
+        while (WiFi.status() != WL_CONNECTED && attempts < 30) {
             flashColor(0xFF00AE);
             delay(1000);
             flashColor(0x000000);
@@ -147,8 +146,8 @@ void setup() {
             res = true;
         } else {
             res = false;
-            WiFi.softAP(espname.c_str());
-            otaEnabled = true;
+            // WiFi.softAP(espname.c_str());
+            // otaEnabled = true;
             // serial.print("AP gestartet: ");
             // serial.println(espname);
             // serial.print("IP Adresse: ");
@@ -168,9 +167,7 @@ void setup() {
 }
 
 void sendCurrentState() {
-  
   mqttClient.publish((espname + "/status").c_str(), COLORS[currentColorIndex].name, false, 0);
-
 }
 
 void mqttCallback(String &topic, String &payload) {
@@ -281,13 +278,19 @@ void flashColor(uint32_t color) {
 
 // ---------- IR-Handling ----------
 void handleIRReception() {
-    uint32_t  tlC  = strtoul(tlcommand, nullptr, 10);
-    uint32_t  nmC  = strtoul(nmcommand, nullptr, 10);
+    uint32_t tlC = strtoul(tlcommand.c_str(), nullptr, 10);
+    uint32_t  nmC  = strtoul(nmcommand.c_str(), nullptr, 10);
     if (!IrReceiver.decode()) return;
     const uint32_t command = IrReceiver.decodedIRData.command;
+    if(command == 80){
+          WiFi.softAP(espname.c_str());
+          otaEnabled = true;
+          res = false;
+    }
     if (command == tlC) {
        flashColor(0xFF00AE);
        setColor(2, true);
+       sendCurrentState();
     }
     else if (command ==  nmC) {
         flashColor(0xFF00AE);
